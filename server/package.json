@@ -32,6 +32,7 @@
     "helmet": "^8.1.0",
     "openai": "^5.0.0-alpha.0",
     "pg": "^8.16.3",
+    "serverless-http": "^4.0.0",
     "uuid": "^13.0.0"
   }
 }
