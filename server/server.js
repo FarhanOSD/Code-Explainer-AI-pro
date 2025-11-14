@@ -5,21 +5,25 @@ import ratelimit from 'express-rate-limit';
 import helmet from 'helmet';
 import OpenAI from 'openai';
 import pkg from 'pg';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import serverless from 'serverless-http';
 
-
-
 dotenv.config();
+
+// Enforce required environment variables
+const requiredEnvVars = ['DATABASE_URL', 'JWT_SECRET', 'API_KEY'];
+for (const varName of requiredEnvVars) {
+  if (!process.env[varName]) {
+    throw new Error(`${varName} environment variable is required`);
+  }
+}
 
 const { Pool } = pkg;
 
 // PostgreSQL Database Setup (using Neon)
 const pool = new Pool({
-  connectionString:
-    process.env.DATABASE_URL ||
-    'postgresql://neondb_owner:npg_y6wszWCpv4uE@ep-still-fire-ad8ldwtl-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require',
+  connectionString: process.env.DATABASE_URL || 'postgresql://neondb_owner:npg_y6wszWCpv4uE@ep-still-fire-ad8ldwtl-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require',
   ssl: { rejectUnauthorized: false },
 });
 
@@ -47,7 +51,7 @@ async function initializeDB() {
 
     console.log('✅ Connected to PostgreSQL database (Neon)');
   } catch (err) {
-    console.error('❌ Database initialization failed:', err.message);
+    console.error('❌ Database initialization failed:', err.stack);
   }
 }
 initializeDB();
@@ -55,13 +59,14 @@ initializeDB();
 // Express App Setup
 const app = express();
 export const handler = serverless(app);
-app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(helmet());
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173',
     credentials: true,
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 
@@ -76,7 +81,7 @@ app.use(limiter);
 // OpenAI Client Setup
 const client = new OpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
-  apiKey: process.env.API_KEY,
+  apiKey: process.env.API_KEY || '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',
 });
 
 // Middleware: Verify JWT
@@ -87,7 +92,7 @@ function authenticateToken(req, res, next) {
 
   jwt.verify(
     token,
-    process.env.JWT_SECRET || replace_with_a_long_random_secret,
+    process.env.JWT_SECRET || 'replace_with_a_long_random_secret',
     (err, user) => {
       if (err) return res.sendStatus(403);
       req.user = user;
@@ -114,6 +119,7 @@ app.post('/api/register', async (req, res) => {
     ]);
     res.status(201).json({ message: 'User registered successfully' });
   } catch (err) {
+    console.error('Register error:', err.stack);
     if (err.message.includes('duplicate key'))
       return res.status(400).json({ error: 'Username already exists' });
     res.status(500).json({ error: 'Database error' });
@@ -138,12 +144,13 @@ app.post('/api/login', async (req, res) => {
 
     const token = jwt.sign(
       { id: user.id, username: user.username },
-      process.env.JWT_SECRET || replace_with_a_long_random_secret,
+      process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
 
     res.json({ message: 'Login successful', token });
   } catch (err) {
+    console.error('Login error:', err.stack);
     res.status(500).json({ error: 'Database error' });
   }
 });
@@ -183,7 +190,7 @@ app.post('/api/explain-code', authenticateToken, async (req, res) => {
 
     res.json({ explanation, language });
   } catch (error) {
-    console.error(error);
+    console.error('Explain code error:', error.stack);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -197,6 +204,7 @@ app.get('/api/my-explanations', authenticateToken, async (req, res) => {
     );
     res.json({ explanations: result.rows });
   } catch (err) {
+    console.error('My explanations error:', err.stack);
     res.status(500).json({ error: 'Database error' });
   }
 });
@@ -215,13 +223,21 @@ app.delete('/api/explanations/:id', authenticateToken, async (req, res) => {
         .json({ error: 'Explanation not found or not owned by you' });
     res.json({ message: 'Explanation deleted successfully' });
   } catch (err) {
+    console.error('Delete explanation error:', err.stack);
     res.status(500).json({ error: 'Database error' });
   }
 });
 
-// Start Server
-const port = process.env.PORT || 5000;
-app.listen(port, () => {
-  console.log(`🚀 Server running on http://localhost:${port}`);
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Something went wrong!' });
 });
 
+// For local development only
+if (process.env.NODE_ENV === 'development') {
+  const port = process.env.PORT || 5000;
+  app.listen(port, () => {
+    console.log(`🚀 Server running on http://localhost:${port}`);
+  });
+}
